@@ -1,0 +1,217 @@
+name: Automated Antigravity Termux Sync
+
+on:
+  schedule:
+    # Check for updates every 6 hours
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # Allows manual trigger from the Actions tab
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+    
+    # Required permissions for secure OIDC attestations and GH releases
+    permissions:
+      id-token: write        # Required to authenticate with Sigstore OIDC
+      attestations: write    # Required to write build attestations
+      contents: write        # Required to write and publish releases
+
+    steps:
+      # 1. Checkout repository source code
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # 2. Integrate custom composite diagnostics toolbox
+      - name: 🧰 Actions Toolbox
+        uses: wallentx/gh-actions/composite/actions-toolbox@main
+
+      # 3. Query versions and compare for difference
+      - name: Check for New Version
+        id: check_version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Querying official manifest..."
+          MANIFEST_JSON=$(curl -fsSL https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json)
+          LATEST_OFFICIAL=$(echo "$MANIFEST_JSON" | jq -r .version)
+          DOWNLOAD_URL=$(echo "$MANIFEST_JSON" | jq -r .url)
+          
+          echo "Querying repository releases via GitHub CLI..."
+          LATEST_RELEASE=$(gh release view --json tagName --template '{{.tagName}}' 2>/dev/null | sed 's/^v//' || echo "0.0.0")
+          
+          if [ -z "$LATEST_RELEASE" ]; then
+            LATEST_RELEASE="0.0.0"
+          fi
+          
+          echo "Official Latest Version  : $LATEST_OFFICIAL"
+          echo "Your Latest Release Tag  : v$LATEST_RELEASE"
+          # Compare and output decision
+          if [ "$LATEST_OFFICIAL" != "$LATEST_RELEASE" ]; then
+            echo "New version detected! Preparing automated build for v$LATEST_OFFICIAL..."
+            {
+              echo "build_needed=true"
+              echo "version=$LATEST_OFFICIAL"
+              echo "url=$DOWNLOAD_URL"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "build_needed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 4. Download latest upstream dynamic dynamic binary
+      - name: Fetch Upstream Antigravity CLI
+        if: steps.check_version.outputs.build_needed == 'true'
+        run: |
+          mkdir -p staging bin lib
+          curl -fsSL -o staging/agy.tar.gz "${{ steps.check_version.outputs.url }}"
+          tar -xzf staging/agy.tar.gz -C staging/
+
+      # 5. Apply VA39 structural memory allocations patch
+      - name: Apply VA39 Memory Patches
+        if: steps.check_version.outputs.build_needed == 'true'
+        run: |
+          python3 - staging/antigravity bin/agy.va39 <<'PY'
+          import hashlib, shutil, struct, sys, pathlib
+          src = pathlib.Path("staging/antigravity")
+          dst = pathlib.Path("bin/agy.va39")
+          shutil.copyfile(src, dst)
+          data = bytearray(dst.read_bytes())
+          def get(off): return struct.unpack_from("<I", data, off)[0]
+          def put(off, word): struct.pack_into("<I", data, off, word)
+          
+          lo, hi = 0, len(data)
+          ubfx_count = lsl_count = mask_count = mmap_count = faccessat2_count = 0
+          for off in range(lo, hi, 4):
+              w = get(off)
+              if (w & 0x7F800000) == 0x53000000:
+                  immr, imms = (w >> 16) & 0x3F, (w >> 10) & 0x3F
+                  if immr == 42 and imms == 44:
+                      put(off, (w & ~((0x3F << 16) | (0x3F << 10))) | (35 << 16) | (37 << 10)); ubfx_count += 1
+                  elif immr == 22 and imms == 21:
+                      put(off, (w & ~((0x3F << 16) | (0x3F << 10))) | (29 << 16) | (28 << 10)); lsl_count += 1
+          for off in range(lo, hi - 4, 4):
+              if get(off) == 0x92D3800A and get(off + 4) == 0xF2E0000A:
+                  put(off, 0x9280000A); put(off + 4, 0xD35DFD4A); mask_count += 1
+          for off in range(lo, hi, 4):
+              if get(off) == 0xF2E00029: put(off, 0xD3596129); mmap_count += 1
+          word_rewrites = {
+              0xD2C20009: 0xD2C00409, 0xD2C2000A: 0xD2C0040A, 0xF2C20008: 0xF2DFF408,
+              0xF2C20009: 0xF2DFF409, 0xD2C10009: 0xD2C00209, 0xD2C1000A: 0xD2C0020A,
+              0xF2C38008: 0xF2DFF708, 0xF2C38009: 0xF2DFF709, 0x92560A6C: 0x925D0A6C,
+              0x92560A6A: 0x925D0A6A, 0xD2C3000D: 0xD2C0060D, 0xD2C3000C: 0xD2C0060C,
+              0xD2C08008: 0xD2C00108,
+          }
+          for off in range(lo, hi, 4):
+              w = get(off)
+              if w in word_rewrites: put(off, word_rewrites[w])
+          for off in range(0, len(data) - 12, 4):
+              if get(off) == 0xAA1F03E5 and get(off + 4) == 0xAA1F03E6 and get(off + 8) == 0xD28036E0 and (get(off + 12) & 0xFC000000) == 0x94000000:
+                  put(off + 8, 0xD2800600); faccessat2_count += 1
+          dst.write_bytes(data)
+          dst.chmod(0o755)
+          print("Patched VA39 structural memory parameters successfully.")
+          PY
+
+      # 6. Cross-Compile Bionic C Bootstrapper targeting aarch64 Android
+      - name: Cross-Compile Bionic C Bootstrapper (aarch64)
+        if: steps.check_version.outputs.build_needed == 'true'
+        run: |
+          NDK_CC="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
+          $NDK_CC -O2 -o bin/agy lib/agy_helper.c
+
+      # 7. Stage local glibc runtime symlinks
+      - name: Stage Runtime Library Symlinks
+        if: steps.check_version.outputs.build_needed == 'true'
+        run: |
+          ln -sfn /data/data/com.termux/files/usr/glibc/lib/libc.so.6 lib/libc.so
+          ln -sfn /data/data/com.termux/files/usr/glibc/lib/libc.so.6 lib/libc.so.6
+
+      # 8. Compress relocatable output files
+      - name: Package Standalone Archive
+        if: steps.check_version.outputs.build_needed == 'true'
+        run: |
+          tar -czf antigravity-termux-standalone.tar.gz bin/ lib/
+
+      # 9. Cryptographically sign build provenance via Sigstore
+      - name: Attest Artifacts
+        uses: actions/attest@v1
+        if: steps.check_version.outputs.build_needed == 'true'
+        with:
+          subject-path: 'antigravity-termux-standalone.tar.gz'
+
+      # 10. Fetch and parse upstream changelog release notes
+      - name: Fetch and Parse Release Notes
+        if: steps.check_version.outputs.build_needed == 'true'
+        run: |
+          VERSION="${{ steps.check_version.outputs.version }}"
+          echo "Downloading upstream CHANGELOG.md..."
+          curl -fsSL -o staging/CHANGELOG.md "https://raw.githubusercontent.com/wallentx/antigravity-cli-termux/refs/heads/main/CHANGELOG.md"
+          
+          echo "Parsing changelog notes for version $VERSION..."
+          python3 - "$VERSION" <<'PY'
+          import sys
+          from pathlib import Path
+          
+          version = sys.argv[1]
+          changelog_path = Path("staging/CHANGELOG.md")
+          if not changelog_path.exists():
+              Path("staging/release-notes.md").write_text(f"Automated standalone Termux build of the Antigravity CLI v{version}.")
+              sys.exit(0)
+              
+          content = changelog_path.read_text()
+          start_tag = f"## {version}"
+          if start_tag not in content:
+              Path("staging/release-notes.md").write_text(f"Automated standalone Termux build of the Antigravity CLI v{version}.")
+              sys.exit(0)
+              
+          lines = content.splitlines()
+          release_notes = []
+          started = False
+          
+          for line in lines:
+              if line.startswith(start_tag):
+                  started = True
+                  continue
+              if started:
+                  if line.startswith("## "):
+                      break
+                  release_notes.append(line)
+                  
+          notes_text = "\n".join(release_notes).strip()
+          if not notes_text:
+              notes_text = f"Automated standalone Termux build of the Antigravity CLI v{version}."
+              
+          full_notes = (
+              f"Automated standalone Termux build of the Antigravity CLI v{version}.\n\n"
+              f"### Upstream Changelog\n\n{notes_text}\n\n"
+              f"### Quick Install Instructions\n"
+              f"```bash\n"
+              f"# 1. Download and extract\n"
+              f"curl -fsSLO https://github.com/${{ github.repository }}/releases/download/v{version}/antigravity-termux-standalone.tar.gz\n"
+              f"tar -xzf antigravity-termux-standalone.tar.gz\n\n"
+              f"# 2. Run immediately without shell configuration or wrappers!\n"
+              f"./bin/agy --help\n"
+              f"```\n\n"
+              f"### Cryptographic Verification\n"
+              f"This artifact includes cryptographic build provenance. You can verify its authenticity using the GitHub CLI:\n"
+              f"```bash\n"
+              f"gh attestation verify antigravity-termux-standalone.tar.gz --owner ${{ github.repository_owner }}\n"
+              f"```"
+          )
+          
+          Path("staging/release-notes.md").write_text(full_notes)
+          print("Release notes generated successfully:")
+          print(full_notes)
+          PY
+
+      # 11. Create Release and Upload Asset natively using GitHub CLI
+      - name: Create and Publish GitHub Release
+        if: steps.check_version.outputs.build_needed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.check_version.outputs.version }}"
+          gh release create "v$VERSION" \
+            --repo "${{ github.repository }}" \
+            --title "Antigravity CLI Termux Standalone v$VERSION" \
+            --notes-file staging/release-notes.md \
+            antigravity-termux-standalone.tar.gz
