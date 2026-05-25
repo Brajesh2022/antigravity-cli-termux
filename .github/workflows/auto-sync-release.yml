@@ -19,7 +19,7 @@ jobs:
     steps:
       # 1. Unshallow checkout to preserve history and tags for changelog generation
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0 # Fetches all history and tags
 
@@ -154,7 +154,7 @@ jobs:
 
       # 9. Cryptographically sign build provenance via Sigstore
       - name: Attest Artifacts
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@v4
         if: steps.check_version.outputs.build_needed == 'true'
         with:
           subject-path: 'antigravity-termux-standalone.tar.gz'
