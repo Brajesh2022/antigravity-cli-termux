@@ -17,9 +17,11 @@ jobs:
       contents: write        # Required to write and publish releases
 
     steps:
-      # 1. Checkout repository source code
+      # 1. Unshallow checkout to preserve history and tags for changelog generation
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetches all history and tags
 
       # 2. Integrate custom composite diagnostics toolbox
       - name: 🧰 Actions Toolbox
@@ -45,7 +47,26 @@ jobs:
           
           echo "Official Latest Version  : $LATEST_OFFICIAL"
           echo "Your Latest Release Tag  : v$LATEST_RELEASE"
-          # Compare and output decision
+          
+          # Fetch all local tags to guarantee references exist in the workspace
+          git fetch --tags --force
+          
+          # Extract commit logs since the last release tag
+          echo "Generating fork-specific release changelog..."
+          FORK_CHANGELOG=""
+          if [ "$LATEST_RELEASE" != "0.0.0" ] && git rev-parse "v$LATEST_RELEASE" >/dev/null 2>&1; then
+            FORK_CHANGELOG=$(git log "v$LATEST_RELEASE..HEAD" --oneline --pretty=format:"* %s (%h)")
+          else
+            FORK_CHANGELOG=$(git log -n 20 --oneline --pretty=format:"* %s (%h)")
+          fi
+          
+          if [ -z "$FORK_CHANGELOG" ]; then
+            FORK_CHANGELOG="* Maintenance rebuild / sync with upstream release."
+          fi
+          
+          mkdir -p staging
+          echo "$FORK_CHANGELOG" > staging/fork-changelog.md
+          
           if [ "$LATEST_OFFICIAL" != "$LATEST_RELEASE" ]; then
             echo "New version detected! Preparing automated build for v$LATEST_OFFICIAL..."
             {
@@ -57,7 +78,7 @@ jobs:
             echo "build_needed=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # 4. Download latest upstream dynamic dynamic binary
+      # 4. Download latest upstream dynamic binary
       - name: Fetch Upstream Antigravity CLI
         if: steps.check_version.outputs.build_needed == 'true'
         run: |
@@ -131,14 +152,14 @@ jobs:
         run: |
           tar -czf antigravity-termux-standalone.tar.gz bin/ lib/
 
-      # 9. Cryptographic provenance signatures via Sigstore
+      # 9. Cryptographically sign build provenance via Sigstore
       - name: Attest Artifacts
         uses: actions/attest-build-provenance@v1
         if: steps.check_version.outputs.build_needed == 'true'
         with:
           subject-path: 'antigravity-termux-standalone.tar.gz'
 
-      # 10. Fetch and parse upstream changelog release notes
+      # 10. Fetch, parse, and merge changelogs (upstream + fork commits)
       - name: Fetch and Parse Release Notes
         if: steps.check_version.outputs.build_needed == 'true'
         run: |
@@ -153,37 +174,48 @@ jobs:
           
           version = sys.argv[1]
           changelog_path = Path("staging/CHANGELOG.md")
-          if not changelog_path.exists():
-              Path("staging/release-notes.md").write_text(f"Automated standalone Termux build of the Antigravity CLI v{version}.")
-              sys.exit(0)
-              
-          content = changelog_path.read_text()
-          start_tag = f"## {version}"
-          if start_tag not in content:
-              Path("staging/release-notes.md").write_text(f"Automated standalone Termux build of the Antigravity CLI v{version}.")
-              sys.exit(0)
-              
-          lines = content.splitlines()
-          release_notes = []
-          started = False
+          fork_changelog_path = Path("staging/fork-changelog.md")
           
-          for line in lines:
-              if line.startswith(start_tag):
-                  started = True
-                  continue
-              if started:
-                  if line.startswith("## "):
-                      break
-                  release_notes.append(line)
-                  
-          notes_text = "\n".join(release_notes).strip()
+          # Fetch fork specific changes if available
+          fork_notes = fork_changelog_path.read_text().strip() if fork_changelog_path.exists() else "* Maintenance rebuild / sync."
+          
+          # Fetch upstream changes
+          if not changelog_path.exists():
+              notes_text = f"Sync with upstream version v{version}."
+          else:
+              content = changelog_path.read_text()
+              start_tag = f"## {version}"
+              if start_tag not in content:
+                  notes_text = f"Sync with upstream version v{version}."
+              else:
+                  lines = content.splitlines()
+                  release_notes = []
+                  started = False
+                  for line in lines:
+                      if line.startswith(start_tag):
+                          started = True
+                          continue
+                      if started:
+                          if line.startswith("## "):
+                              break
+                          release_notes.append(line)
+                  notes_text = "\n".join(release_notes).strip()
+          
           if not notes_text:
-              notes_text = f"Automated standalone Termux build of the Antigravity CLI v{version}."
+              notes_text = f"Sync with upstream version v{version}."
               
           full_notes = (
               f"Automated standalone Termux build of the Antigravity CLI v{version}.\n\n"
-              f"### Upstream Changelog\n\n{notes_text}\n\n"
-              f"### Quick Install Instructions\n"
+              f"> [!IMPORTANT]\n"
+              f"> **Twin-Binary Requirement:** The release package contains **two** binaries: `bin/agy` and `bin/agy.va39`.\n"
+              f"> * `bin/agy.va39` is the core patched engine.\n"
+              f"> * `bin/agy` is the native Bionic C bootstrapper.\n"
+              f"> **Always execute the `./bin/agy` binary.** It automatically clears conflicts and executes the core engine. You **must** keep both files in the same directory for the bootstrapper to run successfully.\n\n"
+              f"### 🔀 Standalone Fork Changelog\n"
+              f"{fork_notes}\n\n"
+              f"### ⬆️ Upstream Changelog (v{version})\n\n{notes_text}\n\n"
+              f"### 📦 Installation\n"
+              f"To install this release, extract the package to your preferred location (e.g. `~/.local` or a sandbox folder) and execute the C helper directly:\n"
               f"```bash\n"
               f"# 1. Download and extract\n"
               f"curl -fsSLO https://github.com/${{ github.repository }}/releases/download/v{version}/antigravity-termux-standalone.tar.gz\n"
@@ -191,16 +223,15 @@ jobs:
               f"# 2. Run immediately without shell configuration or wrappers!\n"
               f"./bin/agy --help\n"
               f"```\n\n"
-              f"### Cryptographic Verification\n"
-              f"This artifact includes cryptographic build provenance. You can verify its authenticity using the GitHub CLI:\n"
+              f"### 🔒 Cryptographic Verification\n"
+              f"This release is signed with cryptographic build provenance. Verify it natively using the GitHub CLI:\n"
               f"```bash\n"
               f"gh attestation verify antigravity-termux-standalone.tar.gz --owner ${{ github.repository_owner }}\n"
               f"```"
           )
           
           Path("staging/release-notes.md").write_text(full_notes)
-          print("Release notes generated successfully:")
-          print(full_notes)
+          print("Release notes generated successfully.")
           PY
 
       # 11. Create Release and Upload Asset natively using GitHub CLI
