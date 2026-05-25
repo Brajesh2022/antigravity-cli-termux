@@ -131,9 +131,9 @@ jobs:
         run: |
           tar -czf antigravity-termux-standalone.tar.gz bin/ lib/
 
-      # 9. Cryptographically sign build provenance via Sigstore
+      # 9. Cryptographic provenance signatures via Sigstore
       - name: Attest Artifacts
-        uses: actions/attest@v1
+        uses: actions/attest-build-provenance@v1
         if: steps.check_version.outputs.build_needed == 'true'
         with:
           subject-path: 'antigravity-termux-standalone.tar.gz'
