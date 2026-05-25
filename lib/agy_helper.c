@@ -16,7 +16,7 @@ void check_and_perform_update(const char* dir) {
     // Formulate a secure curl command to query the GitHub Releases API
     char cmd[512];
     snprintf(cmd, sizeof(cmd), 
-        "curl -fsSL -H \"User-Agent: Termux-Agy\" https://api.github.com/repos/wallentx/antigravity-cli-termux/releases/latest | grep -o '\"tag_name\": \"[^\"]*' | cut -d'\"' -f4", 
+        "curl -fsSL -H \"User-Agent: Termux-Agy\" https://api.github.com/repos/wallentx/antigravity-cli-termux/releases/latest | rg -o '\"tag_name\"\\s*:\\s*\"[^\"]*' | cut -d'\"' -f4", 
         NULL);
 
     FILE* fp = popen(cmd, "r");
@@ -39,7 +39,7 @@ void check_and_perform_update(const char* dir) {
 
     // Clean version representations (e.g. "v1.0.2" -> "1.0.2")
     const char* clean_latest = (latest_tag[0] == 'v') ? latest_tag + 1 : latest_tag;
-    const char* clean_current = (AGY_TERMUX_VERSION[0] == 'v') ? AGY_TERMUX_VERSION + 1 : AGY_TERMUX_VERSION;
+    const char* clean_current = (AGY_TERMUX_VERSION[0] == 'v') ? &AGY_TERMUX_VERSION[1] : AGY_TERMUX_VERSION;
 
     printf("[agy-termux] Current standalone version: v%s\n", clean_current);
     printf("[agy-termux] Latest available version : v%s\n", clean_latest);

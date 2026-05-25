@@ -3,6 +3,42 @@
 > [!NOTE]
 > **Community Acknowledgement:** Much of the core binary patching and VA39 memory layout engineering implemented in this Termux fork is built upon the foundational work and discoveries of [@hjotha](https://github.com/hjotha) and [@Brajesh2022](https://github.com/Brajesh2022). Deep appreciation to the community for unlocking compatibility!
 
+## 📱 Termux Standalone Port & Architecture
+
+This repository maintains an automated standalone fork of the Google Antigravity TUI CLI that is fully relocatable, wrapper-less, and self-updating within the Android Termux `arm64` environment.
+
+### 🛠️ Automated Artifact Generation Pipeline
+
+Every 6 hours, a GitHub Actions workflow performs the following engineering pipeline to produce the release archive:
+
+```mermaid
+graph TD
+    A[Upstream Release Detected] --> B[Download Linux arm64 Binary]
+    B --> C[Apply VA39 Structural Memory Allocation Patches]
+    C --> D[Cross-Compile Native Bionic C Bootstrapper]
+    D --> E[Package Relocatable Standalone Tarball]
+    E --> F[Cryptographically Sign Build via Sigstore OIDC]
+```
+
+#### 1. VA39 Memory Layout Patching (TCMalloc)
+Upstream utilizes Google's `TCMalloc`, which assumes a standard 48-bit Virtual Address (VA) space. On Android devices with custom kernels or older configurations, the user space utilizes a 39-bit VA space. Running the unmodified binary results in segmentation faults or fatal allocation failures. 
+We run a dedicated Python patching process that:
+* Rewrites specific bitmask and `ubfx` (unsigned bitfield extract) instructions.
+* Adjusts page-alignment logic and `mmap` parameters.
+* Rewrites low-level library wrappers (`faccessat2`) to guarantee absolute compatibility with 39-bit systems.
+
+#### 2. Relocatable Bionic C Bootstrapper
+Standard Termux runs under the Android Bionic libc environment, injecting specific preloads (`LD_PRELOAD=/data/.../libtermux-exec.so`) to intercept calls. However, because our patched binary is built under glibc, loading it directly causes immediate crashes (`invalid ELF header`) when the glibc dynamic linker processes Bionic preloads.
+To circumvent this, we compile a native Bionic C bootstrapper (`bin/agy`):
+* **Dynamic Resolution:** Resolves its own folder at runtime using `/proc/self/exe` via `readlink`, enabling the package to be extracted and executed in *any* directory without wrappers.
+* **Environment Cleansing:** Unsets conflicting environment variables (`LD_PRELOAD`, `LD_LIBRARY_PATH`) before executing the loader.
+* **Redirection:** Configures the native Termux CA bundle (`SSL_CERT_FILE`) and DNS routing (`GODEBUG=netdns=cgo`), then passes execution cleanly to the glibc loader.
+
+#### 3. In-Place Self-Updating
+The C bootstrapper intercepts the `update` subcommand and queries this fork's GitHub Releases API, providing a seamless in-place update mechanism that updates both the patched engine and itself without needing complex wrappers or manually executing curl commands.
+
+---
+
 Antigravity CLI understands your codebase, makes edits with your permission, and executes commands — right from your terminal.
 
 - **Official Docs**: [antigravity.google/docs/cli-overview](https://antigravity.google/docs/cli-overview)
