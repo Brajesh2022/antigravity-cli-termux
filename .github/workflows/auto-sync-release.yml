@@ -10,7 +10,7 @@ on:
         description: 'Dry Run (skip attestation and release creation)'
         required: false
         type: boolean
-        default: false
+        default: 'false'
 
 jobs:
   check-and-build:
