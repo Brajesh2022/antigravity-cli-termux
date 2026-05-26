@@ -152,7 +152,7 @@ jobs:
         with:
           subject-path: 'antigravity-termux-standalone.tar.gz'
 
-      # 10. Fetch, parse, and merge changelogs (upstream + fork commits)
+      # 9. Fetch, parse, and merge changelogs (upstream + fork commits)
       - name: Fetch and Parse Release Notes
         if: steps.check_version.outputs.build_needed == 'true'
         run: |
@@ -227,7 +227,7 @@ jobs:
           print("Release notes generated successfully.")
           PY
 
-      # 11. Create Release and Upload Asset natively using GitHub CLI
+      # 10. Create Release and Upload Asset natively using GitHub CLI
       - name: Create and Publish GitHub Release
         if: steps.check_version.outputs.build_needed == 'true'
         env:
