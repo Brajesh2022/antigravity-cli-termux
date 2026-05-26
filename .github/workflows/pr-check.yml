@@ -5,9 +5,46 @@ on:
     branches:
       - dev
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
-  validate:
-    name: Lint, Compile and Build Check
+  c-style-and-tidy:
+    name: C/C++ Format and Tidy
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Run clang-format and clang-tidy
+        id: cpp_linter
+        uses: cpp-linter/cpp-linter-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          style: file
+          tidy-checks: ''
+          files-changed-only: false
+          lines-changed-only: false
+          thread-comments: update
+          step-summary: true
+          file-annotations: true
+          extra-args: '-std=gnu11'
+
+      - name: Fail on clang-format or clang-tidy findings
+        if: steps.cpp_linter.outputs.checks-failed > 0
+        run: exit 1
+
+  cppcheck:
+    name: C/C++ Static Analysis
     runs-on: ubuntu-latest
 
     defaults:
@@ -32,24 +69,69 @@ jobs:
       - name: Run C Static Analysis
         run: |
           echo "Running cppcheck static analysis on C source files..."
-          cppcheck --enable=all --error-exitcode=1 lib/
+          cppcheck --enable=warning,performance,portability --suppress=missingIncludeSystem --error-exitcode=1 lib/
+
+  strict-compile:
+    name: Strict GCC and Clang Compile
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Strict C Compiler Diagnostic Check
         run: |
-          echo "Verifying standalone C compilation under strict warning flags..."
+          echo "Verifying standalone C compilation under strict warning flags with GCC and Clang..."
           mkdir -p bin
 
-          echo "Compiling core bootstrapper..."
-          gcc -Wall -Wextra -Werror -Wpedantic -Wshadow -Wformat=2 -O2 -o bin/agy lib/agy_helper.c
-          for source in lib/*.c; do
-            [[ -e "$source" ]] || continue
-            [[ "$source" == "lib/agy_helper.c" ]] && continue
+          strict_flags=(
+            -std=gnu11
+            -Wall
+            -Wextra
+            -Wpedantic
+            -Wshadow
+            -Wformat=2
+            -Wundef
+            -Wcast-align
+            -Wconversion
+            -Wsign-conversion
+            -Werror
+            -O2
+          )
 
-            base_name=$(basename "$source" .c)
-            echo "Auxiliary C library detected: $source. Verifying compilation as shared object..."
-            mkdir -p lib
-            gcc -Wall -Wextra -Werror -Wpedantic -Wshadow -Wformat=2 -O2 -fPIC -shared -o "lib/lib${base_name}.so" "$source" -ldl
+          for cc in gcc clang; do
+            echo "Compiling core bootstrapper with ${cc}..."
+            "$cc" "${strict_flags[@]}" -o "bin/agy-${cc}" lib/agy_helper.c
+
+            for source in lib/*.c; do
+              [[ -e "$source" ]] || continue
+              [[ "$source" == "lib/agy_helper.c" ]] && continue
+
+              base_name=$(basename "$source" .c)
+              echo "Auxiliary C library detected: $source. Verifying shared-object compilation with ${cc}..."
+              "$cc" "${strict_flags[@]}" -fPIC -shared -o "lib/lib${base_name}-${cc}.so" "$source" -ldl
+            done
           done
+
+  build-and-package:
+    name: Build, Package, and Archive Check
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: End-to-End Build Integration Test
         run: |
@@ -77,7 +159,7 @@ jobs:
           echo "Archive validation passed successfully! Footprint is clean."
 
       - name: Upload Standalone Tarball Preview
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: antigravity-termux-standalone-preview
           path: antigravity-termux-standalone.tar.gz
