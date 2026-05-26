@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <libgen.h>
 #include <limits.h>
 #include <stdio.h>
@@ -8,6 +9,20 @@
 #ifndef AGY_TERMUX_VERSION
 #define AGY_TERMUX_VERSION "1.0.2"
 #endif
+
+static int agy_is_valid_release_tag(const char *tag) {
+    if (tag == NULL || tag[0] == '\0' || tag[0] == '-') {
+        return 0;
+    }
+
+    for (const unsigned char *cursor = (const unsigned char *)tag; *cursor != '\0'; cursor++) {
+        if (!isalnum(*cursor) && *cursor != '.' && *cursor != '_' && *cursor != '-') {
+            return 0;
+        }
+    }
+
+    return 1;
+}
 
 // Helper to query your fork's latest release version via GitHub API and update in-place
 void check_and_perform_update(const char *dir) {
@@ -44,6 +59,10 @@ void check_and_perform_update(const char *dir) {
         printf("[agy-termux] Error: Failed to parse latest release tag from GitHub.\n");
         return;
     }
+    if (!agy_is_valid_release_tag(latest_tag)) {
+        printf("[agy-termux] Error: Latest release tag contains unsupported characters.\n");
+        return;
+    }
 
     // Clean version representations (e.g. "v1.0.2" -> "1.0.2")
     const char *clean_latest = (latest_tag[0] == 'v') ? latest_tag + 1 : latest_tag;
@@ -56,6 +75,7 @@ void check_and_perform_update(const char *dir) {
     if (strcmp(clean_latest, clean_current) != 0) {
         printf("\n[agy-termux] A new update (v%s) is available!\n", clean_latest);
         printf("[agy-termux] Would you like to update now? [y/N]: ");
+        fflush(stdout);
 
         char response = 'n';
         char response_line[8] = {0};
