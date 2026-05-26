@@ -16,9 +16,6 @@ jobs:
   check-and-build:
     runs-on: ubuntu-latest
 
-    env:
-      DRY_RUN: ${{ inputs.dry_run }}
-
     defaults:
       run:
         shell: bash
@@ -56,6 +53,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           MANIFEST_URL: https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           ./.github/scripts/check-version.sh
 
@@ -81,6 +79,8 @@ jobs:
 
       - name: Fetch and Parse Release Notes
         if: steps.check_version.outputs.build_needed == 'true'
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           ./.github/scripts/generate-release-notes.sh \
             "${{ steps.check_version.outputs.version }}"
