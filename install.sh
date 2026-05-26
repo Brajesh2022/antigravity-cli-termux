@@ -44,12 +44,10 @@ if [[ -t 1 ]]; then
   DIM="\033[2m"
   GREEN="\033[32m"
   RED="\033[31m"
-  YELLOW="\033[33m"
   CYAN="\033[36m"
-  MAGENTA="\033[35m"
   RESET="\033[0m"
 else
-  BOLD="" DIM="" GREEN="" RED="" YELLOW="" CYAN="" MAGENTA="" RESET=""
+  BOLD="" DIM="" GREEN="" RED="" CYAN="" RESET=""
 fi
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -64,7 +62,7 @@ die() {
       printf '\n%b\n' " ${RED}[ERR]${RESET} Installation failed or was cancelled."
     fi
     printf "For manual patching and installation:\n"
-    printf "${CYAN}https://gist.github.com/Brajesh2022/e42160d29b55417db6c18c52dd1d6d37${RESET}\n\n"
+    printf "%bhttps://gist.github.com/Brajesh2022/e42160d29b55417db6c18c52dd1d6d37%b\n\n" "$CYAN" "$RESET"
   } >&2
   exit 1
 }
@@ -77,16 +75,16 @@ spinner() {
   printf "\033[?25l" # Hide cursor
   while kill -0 "$pid" 2>/dev/null; do
     local temp=${spinstr#?}
-    printf "\r\033[K ${CYAN}[%c]${RESET} ${DIM}%s${RESET}" "$spinstr" "$msg"
+    printf "\r\033[K %b[%c]%b %b%s%b" "$CYAN" "$spinstr" "$RESET" "$DIM" "$msg" "$RESET"
     local spinstr=$temp${spinstr%"$temp"}
     sleep 0.1
   done
   local exit_status=0
   wait "$pid" || exit_status=$?
   if [ $exit_status -eq 0 ]; then
-    printf "\r\033[K ${GREEN}[OK]${RESET} %s\n" "$msg"
+    printf "\r\033[K %b[OK]%b %s\n" "$GREEN" "$RESET" "$msg"
   else
-    printf "\r\033[K ${RED}[ERR]${RESET} %s\n" "$msg"
+    printf "\r\033[K %b[ERR]%b %s\n" "$RED" "$RESET" "$msg"
   fi
   printf "\033[?25h" # Show cursor
   return $exit_status
@@ -104,16 +102,16 @@ progress_spinner() {
     if [[ -f "$pct_file" ]]; then
       pct=$(tail -n 1 "$pct_file" 2>/dev/null || echo "  0")
     fi
-    printf "\r\033[K ${CYAN}[%c]${RESET} [%3d%%] ${DIM}%s${RESET}" "$spinstr" "$pct" "$msg"
+    printf "\r\033[K %b[%c]%b [%3s%%] %b%s%b" "$CYAN" "$spinstr" "$RESET" "$pct" "$DIM" "$msg" "$RESET"
     local spinstr=$temp${spinstr%"$temp"}
     sleep 0.1
   done
   local exit_status=0
   wait "$pid" || exit_status=$?
   if [ $exit_status -eq 0 ]; then
-    printf "\r\033[K ${GREEN}[OK]${RESET} %s\n" "$msg"
+    printf "\r\033[K %b[OK]%b %s\n" "$GREEN" "$RESET" "$msg"
   else
-    printf "\r\033[K ${RED}[ERR]${RESET} %s\n" "$msg"
+    printf "\r\033[K %b[ERR]%b %s\n" "$RED" "$RESET" "$msg"
   fi
   printf "\033[?25h" # Restore cursor
   return $exit_status
@@ -183,7 +181,7 @@ download_with_progress() {
       printf "\r\033[K %s[OK]%s [%s] 100%% %s%5.1fM / %4.1fM%s\n", grn, rst, bar, dim, t_mb, t_mb, rst
     }'
   else
-    printf "\r\033[K ${RED}[ERR]${RESET} Download failed.\n"
+    printf "\r\033[K %b[ERR]%b Download failed.\n" "$RED" "$RESET"
   fi
   
   printf "\033[?25h" # Restore cursor
