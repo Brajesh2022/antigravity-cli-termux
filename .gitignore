@@ -1,0 +1,22 @@
+# Build Outputs & Temporary Files
+bin/*
+staging/
+*.tar.gz
+
+# Local Application Settings & Sandboxes
+.antigravitycli/
+.scratch/
+
+# Local Editor Configurations
+.cursorrules
+
+# System Artifacts
+.DS_Store
+Thumbs.db
+
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/

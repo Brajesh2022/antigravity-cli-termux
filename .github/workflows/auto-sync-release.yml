@@ -4,232 +4,89 @@ on:
   schedule:
     # Check for updates every 6 hours
     - cron: '0 */6 * * *'
-  workflow_dispatch: # Allows manual trigger from the Actions tab
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry Run (skip attestation and release creation)'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   check-and-build:
     runs-on: ubuntu-latest
-    
-    # Required permissions for secure OIDC attestations and GH releases
+
+    env:
+      DRY_RUN: ${{ inputs.dry_run }}
+
+    defaults:
+      run:
+        shell: bash
+
     permissions:
-      id-token: write        # Required to authenticate with Sigstore OIDC
-      attestations: write    # Required to write build attestations
-      contents: write        # Required to write and publish releases
+      id-token: write
+      attestations: write
+      contents: write
+      actions: read
+      checks: read
+      deployments: read
+      issues: read
+      discussions: read
+      packages: read
+      pages: read
+      pull-requests: read
+      repository-projects: read
+      statuses: read
 
     steps:
-      # 1. Unshallow checkout to preserve history and tags for changelog generation
       - name: Checkout Code
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0 # Fetches all history and tags
+          fetch-depth: 0
 
-      # 2. Integrate custom composite diagnostics toolbox
       - name: 🧰 Actions Toolbox
         uses: wallentx/gh-actions/composite/actions-toolbox@main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          checkout: false
 
-      # 3. Query versions and compare for difference
       - name: Check for New Version
         id: check_version
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          MANIFEST_URL: https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json
         run: |
-          echo "Querying official manifest..."
-          MANIFEST_JSON=$(curl -fsSL https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json)
-          LATEST_OFFICIAL=$(echo "$MANIFEST_JSON" | jq -r .version)
-          DOWNLOAD_URL=$(echo "$MANIFEST_JSON" | jq -r .url)
-          
-          echo "Querying repository releases via GitHub CLI..."
-          LATEST_RELEASE=$(gh release view --json tagName --template '{{.tagName}}' 2>/dev/null | sed 's/^v//' || echo "0.0.0")
-          
-          if [ -z "$LATEST_RELEASE" ]; then
-            LATEST_RELEASE="0.0.0"
-          fi
-          
-          echo "Official Latest Version  : $LATEST_OFFICIAL"
-          echo "Your Latest Release Tag  : v$LATEST_RELEASE"
-          
-          # Fetch all local tags to guarantee references exist in the workspace
-          git fetch --tags --force
-          
-          # Extract commit logs since the last release tag
-          echo "Generating fork-specific release changelog..."
-          FORK_CHANGELOG=""
-          if [ "$LATEST_RELEASE" != "0.0.0" ] && git rev-parse "v$LATEST_RELEASE" >/dev/null 2>&1; then
-            FORK_CHANGELOG=$(git log "v$LATEST_RELEASE..HEAD" --oneline --pretty=format:"* %s (%h)")
-          else
-            FORK_CHANGELOG=$(git log -n 20 --oneline --pretty=format:"* %s (%h)")
-          fi
-          
-          if [ -z "$FORK_CHANGELOG" ]; then
-            FORK_CHANGELOG="* Maintenance rebuild / sync with upstream release."
-          fi
-          
-          mkdir -p staging
-          echo "$FORK_CHANGELOG" > staging/fork-changelog.md
-          
-          if [ "$LATEST_OFFICIAL" != "$LATEST_RELEASE" ]; then
-            echo "New version detected! Preparing automated build for v$LATEST_OFFICIAL..."
-            {
-              echo "build_needed=true"
-              echo "version=$LATEST_OFFICIAL"
-              echo "url=$DOWNLOAD_URL"
-            } >> "$GITHUB_OUTPUT"
-          else
-            echo "build_needed=false" >> "$GITHUB_OUTPUT"
-          fi
+          ./.github/scripts/check-version.sh
 
-      # 4. Download latest upstream dynamic binary
-      - name: Fetch Upstream Antigravity CLI
+      - name: Build Standalone Binaries
         if: steps.check_version.outputs.build_needed == 'true'
         run: |
-          mkdir -p staging bin lib
-          curl -fsSL -o staging/agy.tar.gz "${{ steps.check_version.outputs.url }}"
-          tar -xzf staging/agy.tar.gz -C staging/
+          ./build.sh
 
-      # 5. Apply VA39 structural memory allocations patch
-      - name: Apply VA39 Memory Patches
-        if: steps.check_version.outputs.build_needed == 'true'
-        run: |
-          python3 - staging/antigravity bin/agy.va39 <<'PY'
-          import hashlib, shutil, struct, sys, pathlib
-          src = pathlib.Path("staging/antigravity")
-          dst = pathlib.Path("bin/agy.va39")
-          shutil.copyfile(src, dst)
-          data = bytearray(dst.read_bytes())
-          def get(off): return struct.unpack_from("<I", data, off)[0]
-          def put(off, word): struct.pack_into("<I", data, off, word)
-          
-          lo, hi = 0, len(data)
-          ubfx_count = lsl_count = mask_count = mmap_count = faccessat2_count = 0
-          for off in range(lo, hi, 4):
-              w = get(off)
-              if (w & 0x7F800000) == 0x53000000:
-                  immr, imms = (w >> 16) & 0x3F, (w >> 10) & 0x3F
-                  if immr == 42 and imms == 44:
-                      put(off, (w & ~((0x3F << 16) | (0x3F << 10))) | (35 << 16) | (37 << 10)); ubfx_count += 1
-                  elif immr == 22 and imms == 21:
-                      put(off, (w & ~((0x3F << 16) | (0x3F << 10))) | (29 << 16) | (28 << 10)); lsl_count += 1
-          for off in range(lo, hi - 4, 4):
-              if get(off) == 0x92D3800A and get(off + 4) == 0xF2E0000A:
-                  put(off, 0x9280000A); put(off + 4, 0xD35DFD4A); mask_count += 1
-          for off in range(lo, hi, 4):
-              if get(off) == 0xF2E00029: put(off, 0xD3596129); mmap_count += 1
-          word_rewrites = {
-              0xD2C20009: 0xD2C00409, 0xD2C2000A: 0xD2C0040A, 0xF2C20008: 0xF2DFF408,
-              0xF2C20009: 0xF2DFF409, 0xD2C10009: 0xD2C00209, 0xD2C1000A: 0xD2C0020A,
-              0xF2C38008: 0xF2DFF708, 0xF2C38009: 0xF2DFF709, 0x92560A6C: 0x925D0A6C,
-              0x92560A6A: 0x925D0A6A, 0xD2C3000D: 0xD2C0060D, 0xD2C3000C: 0xD2C0060C,
-              0xD2C08008: 0xD2C00108,
-          }
-          for off in range(lo, hi, 4):
-              w = get(off)
-              if w in word_rewrites: put(off, word_rewrites[w])
-          for off in range(0, len(data) - 12, 4):
-              if get(off) == 0xAA1F03E5 and get(off + 4) == 0xAA1F03E6 and get(off + 8) == 0xD28036E0 and (get(off + 12) & 0xFC000000) == 0x94000000:
-                  put(off + 8, 0xD2800600); faccessat2_count += 1
-          dst.write_bytes(data)
-          dst.chmod(0o755)
-          print("Patched VA39 structural memory parameters successfully.")
-          PY
-
-      # 6. Cross-Compile Bionic C Bootstrapper targeting aarch64 Android
-      - name: Cross-Compile Bionic C Bootstrapper (aarch64)
-        if: steps.check_version.outputs.build_needed == 'true'
-        run: |
-          NDK_CC="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
-          $NDK_CC -O2 -o bin/agy lib/agy_helper.c
-
-      # 7. Compress relocatable output files
       - name: Package Standalone Archive
         if: steps.check_version.outputs.build_needed == 'true'
         run: |
           tar -czf antigravity-termux-standalone.tar.gz bin/
 
-      # 8. Cryptographically sign build provenance via Sigstore
       - name: Attest Artifacts
         uses: actions/attest-build-provenance@v4
-        if: steps.check_version.outputs.build_needed == 'true'
+        if: steps.check_version.outputs.build_needed == 'true' && inputs.dry_run != true
         with:
           subject-path: 'antigravity-termux-standalone.tar.gz'
 
-      # 9. Fetch, parse, and merge changelogs (upstream + fork commits)
+      - name: Set up mq
+        if: steps.check_version.outputs.build_needed == 'true'
+        uses: harehare/setup-mq@v1
+
       - name: Fetch and Parse Release Notes
         if: steps.check_version.outputs.build_needed == 'true'
         run: |
-          VERSION="${{ steps.check_version.outputs.version }}"
-          echo "Downloading upstream CHANGELOG.md..."
-          curl -fsSL -o staging/CHANGELOG.md "https://raw.githubusercontent.com/wallentx/antigravity-cli-termux/refs/heads/main/CHANGELOG.md"
-          
-          echo "Parsing changelog notes for version $VERSION..."
-          python3 - "$VERSION" <<'PY'
-          import sys
-          from pathlib import Path
-          
-          version = sys.argv[1]
-          changelog_path = Path("staging/CHANGELOG.md")
-          fork_changelog_path = Path("staging/fork-changelog.md")
-          
-          # Fetch fork specific changes if available
-          fork_notes = fork_changelog_path.read_text().strip() if fork_changelog_path.exists() else "* Maintenance rebuild / sync."
-          
-          # Fetch upstream changes
-          if not changelog_path.exists():
-              notes_text = f"Sync with upstream version v{version}."
-          else:
-              content = changelog_path.read_text()
-              start_tag = f"## {version}"
-              if start_tag not in content:
-                  notes_text = f"Sync with upstream version v{version}."
-              else:
-                  lines = content.splitlines()
-                  release_notes = []
-                  started = False
-                  for line in lines:
-                      if line.startswith(start_tag):
-                          started = True
-                          continue
-                      if started:
-                          if line.startswith("## "):
-                              break
-                          release_notes.append(line)
-                  notes_text = "\n".join(release_notes).strip()
-          
-          if not notes_text:
-              notes_text = f"Sync with upstream version v{version}."
-              
-          full_notes = (
-              f"Automated standalone Termux build of the Antigravity CLI v{version}.\n\n"
-              f"> [!IMPORTANT]\n"
-              f"> **Twin-Binary Requirement:** The release package contains **two** binaries: `bin/agy` and `bin/agy.va39`.\n"
-              f"> * `bin/agy.va39` is the core patched engine.\n"
-              f"> * `bin/agy` is the native Bionic C bootstrapper.\n"
-              f"> **Always execute the `./bin/agy` binary.** It automatically clears conflicts and executes the core engine. You **must** keep both files in the same directory for the bootstrapper to run successfully.\n\n"
-              f"### 🔀 Standalone Fork Changelog\n"
-              f"{fork_notes}\n\n"
-              f"### ⬆️ Upstream Changelog (v{version})\n\n{notes_text}\n\n"
-              f"### 📦 Installation\n"
-              f"To install this release, extract the package to your preferred location (e.g. `~/.local` or a sandbox folder) and execute the C helper directly:\n"
-              f"```bash\n"
-              f"# 1. Download and extract\n"
-              f"curl -fsSLO https://github.com/${{ github.repository }}/releases/download/v{version}/antigravity-termux-standalone.tar.gz\n"
-              f"tar -xzf antigravity-termux-standalone.tar.gz\n\n"
-              f"# 2. Run immediately without shell configuration or wrappers!\n"
-              f"./bin/agy --help\n"
-              f"```\n\n"
-              f"### 🔒 Cryptographic Verification\n"
-              f"This release is signed with cryptographic build provenance. Verify it natively using the GitHub CLI:\n"
-              f"```bash\n"
-              f"gh attestation verify antigravity-termux-standalone.tar.gz --owner ${{ github.repository_owner }}\n"
-              f"```"
-          )
-          
-          Path("staging/release-notes.md").write_text(full_notes)
-          print("Release notes generated successfully.")
-          PY
+          ./.github/scripts/generate-release-notes.sh \
+            "${{ steps.check_version.outputs.version }}"
 
-      # 10. Create Release and Upload Asset natively using GitHub CLI
       - name: Create and Publish GitHub Release
-        if: steps.check_version.outputs.build_needed == 'true'
+        if: steps.check_version.outputs.build_needed == 'true' && inputs.dry_run != true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
