@@ -211,6 +211,10 @@ int main(int argc, char **argv) {
     // 6. Handle interposer unpacking in non-Termux (chroot) environments
     if (!is_termux) {
         fixer_path = unpack_mmap_fixer();
+        if (!fixer_path) {
+            fprintf(stderr, "[ERR] Failed to extract PRoot compatibility layer. Please check /tmp permissions.\n");
+            return 1;
+        }
     }
 
     // 7. Resolve dynamic loader path

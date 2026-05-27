@@ -197,6 +197,15 @@ ok "Patched binary generated: bin/agy.va39"
 
 # 2. Compile the dynamic mmap interposer first
 info "Compiling mmap VA39 compatibility layer as a shared library..."
+if [[ -n "${TERMUX_VERSION:-}" ]]; then
+  echo ""
+  echo " [!] WARNING: You are building inside native Termux. The generated"
+  echo "     libmmap_va39_fix.so will be linked against Android's Bionic libc."
+  echo "     This binary will be bundled into the bootstrapper, but it will"
+  echo "     NOT work inside a glibc PRoot environment."
+  echo "     For PRoot support, run build.sh inside a glibc PRoot distro."
+  echo ""
+fi
 mkdir -p lib
 if ! "$local_cc" -O2 -fPIC -shared -o lib/libmmap_va39_fix.so lib/mmap_va39_fix.c -ldl; then
   die "Compilation of lib/mmap_va39_fix.c failed."
