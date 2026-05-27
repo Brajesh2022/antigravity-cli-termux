@@ -212,7 +212,8 @@ int main(int argc, char **argv) {
     if (!is_termux) {
         fixer_path = unpack_mmap_fixer();
         if (!fixer_path) {
-            fprintf(stderr, "[ERR] Failed to extract PRoot compatibility layer. Please check /tmp permissions.\n");
+            fprintf(stderr, "[ERR] Failed to extract PRoot compatibility layer. Please check /tmp "
+                            "permissions.\n");
             return 1;
         }
     }
