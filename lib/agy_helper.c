@@ -1,5 +1,6 @@
 #include "mmap_va39_fix_bytes.h"
 #include <ctype.h>
+#include <errno.h>
 #include <libgen.h>
 #include <limits.h>
 #include <stdio.h>
@@ -212,8 +213,9 @@ int main(int argc, char **argv) {
     if (!is_termux) {
         fixer_path = unpack_mmap_fixer();
         if (!fixer_path) {
-            fprintf(stderr, "[ERR] Failed to extract PRoot compatibility layer. Please check /tmp "
-                            "permissions.\n");
+            (void)fprintf(stderr,
+                          "[ERR] Failed to extract PRoot compatibility layer. Please check /tmp "
+                          "permissions.\n");
             return 1;
         }
     }
@@ -269,8 +271,9 @@ int main(int argc, char **argv) {
     new_argv[arg_idx] = NULL;
 
     // 10. Execute the glibc dynamic loader
-    execv(loader, new_argv);
-
-    free(new_argv);
-    return 1;
+    if (execv(loader, new_argv) == -1) {
+        perror("[agy-termux] execv failed");
+        free(new_argv);
+        return 1;
+    }
 }
