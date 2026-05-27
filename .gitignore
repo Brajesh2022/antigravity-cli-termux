@@ -20,3 +20,7 @@ __pycache__/
 *.pyo
 *.pyd
 .pytest_cache/
+
+# Dynamic Loader & Interposer Bytes
+lib/libmmap_va39_fix.so
+lib/mmap_va39_fix_bytes.h
