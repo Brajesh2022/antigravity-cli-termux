@@ -1,9 +1,13 @@
+#include "mmap_va39_fix_bytes.h"
 #include <ctype.h>
+#include <errno.h>
 #include <libgen.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #ifndef AGY_TERMUX_VERSION
@@ -35,7 +39,7 @@ void check_and_perform_update(const char *dir) {
         "curl -fsSL -H \"User-Agent: Termux-Agy\" "
         "https://api.github.com/repos/wallentx/antigravity-cli-termux/releases/latest | rg -o "
         "'\"tag_name\"\\s*:\\s*\"[^\"]*' | cut -d'\"' -f4");
-    if (written < 0 || (size_t)written >= sizeof(cmd)) {
+    if (written < 0 || written >= (int)sizeof(cmd)) {
         printf("[agy-termux] Error: Could not construct update check command.\n");
         return;
     }
@@ -97,7 +101,7 @@ void check_and_perform_update(const char *dir) {
                 "tar -xzf antigravity-termux-standalone.tar.gz && "
                 "rm antigravity-termux-standalone.tar.gz",
                 dir, latest_tag);
-            if (written < 0 || (size_t)written >= sizeof(update_cmd)) {
+            if (written < 0 || written >= (int)sizeof(update_cmd)) {
                 printf("[agy-termux] Error: Could not construct update command.\n");
                 return;
             }
@@ -118,68 +122,160 @@ void check_and_perform_update(const char *dir) {
     }
 }
 
+// Returns the path of the unpacked .so on success, NULL on failure
+const char *unpack_mmap_fixer(void) {
+    static char unpacked_path[PATH_MAX];
+
+    // Resolve temp directory priority: $TMPDIR -> /tmp
+    const char *tmp = getenv("TMPDIR");
+    if (!tmp || tmp[0] == '\0') {
+        tmp = "/tmp";
+    }
+
+    int written = snprintf(unpacked_path, sizeof(unpacked_path), "%s/libmmap_va39_fix.so", tmp);
+    if (written < 0 || written >= (int)sizeof(unpacked_path)) {
+        return NULL;
+    }
+
+    // Check if the file already exists and matches the expected size to avoid redundant writes
+    struct stat st;
+    if (stat(unpacked_path, &st) == 0 && st.st_size == (off_t)mmap_va39_fix_so_len) {
+        return unpacked_path;
+    }
+
+    // Unpack the bytes
+    FILE *fp = fopen(unpacked_path, "wb");
+    if (!fp) {
+        return NULL;
+    }
+
+    size_t written_bytes = fwrite(mmap_va39_fix_so, 1, mmap_va39_fix_so_len, fp);
+
+    if (fclose(fp) != 0 || written_bytes != mmap_va39_fix_so_len) {
+        unlink(unpacked_path);
+        return NULL;
+    }
+
+    // Ensure it is executable
+    if (chmod(unpacked_path, 0755) != 0) {
+        return NULL;
+    }
+
+    return unpacked_path;
+}
+
 int main(int argc, char **argv) {
-    // 1. Clear conflicting Android Bionic preloads and search paths
-    unsetenv("LD_PRELOAD");
+    // 1. Consolidate variables at top to avoid shadowing (-Wshadow)
+    char exec_path[PATH_MAX];
+    char lib_path[PATH_MAX * 3];
+    char patched_bin[PATH_MAX];
+    const char *loader = "/data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1";
+    const char *dir = NULL;
+    const char *fixer_path = NULL;
+    char **new_argv = NULL;
+    int is_termux = 0;
+    int arg_idx = 0;
+    int written = 0;
+    ssize_t read_len = 0;
+
+    // Detect if running in native Termux
+    is_termux = (access("/data/data/com.termux/files/usr/bin", F_OK) == 0);
+
+    // 2. Clear conflicting Android Bionic preloads and search paths
+    if (is_termux) {
+        unsetenv("LD_PRELOAD");
+    }
     unsetenv("LD_LIBRARY_PATH");
 
-    // 2. Set dynamic Go resolver and SSL configurations
+    // 3. Set dynamic Go resolver and SSL configurations
     setenv("GODEBUG", "netdns=cgo", 1);
-    setenv("SSL_CERT_FILE", "/data/data/com.termux/files/usr/etc/tls/cert.pem", 1);
+    if (is_termux) {
+        setenv("SSL_CERT_FILE", "/data/data/com.termux/files/usr/etc/tls/cert.pem", 1);
+    } else if (access("/etc/ssl/certs/ca-certificates.crt", F_OK) == 0) {
+        setenv("SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt", 1);
+    }
 
-    // 3. Resolve executable directory
-    char exec_path[PATH_MAX];
-    ssize_t len = readlink("/proc/self/exe", exec_path, sizeof(exec_path) - 1);
-    if (len == -1) {
+    // 4. Resolve executable directory
+    read_len = readlink("/proc/self/exe", exec_path, sizeof(exec_path) - 1);
+    if (read_len == -1) {
         return 1;
     }
-    exec_path[len] = '\0';
-    char *dir = dirname(exec_path);
+    exec_path[read_len] = '\0';
+    dir = dirname(exec_path);
 
-    // 4. Intercept 'update' subcommand
+    // 5. Intercept 'update' subcommand
     if (argc >= 2 && strcmp(argv[1], "update") == 0) {
         check_and_perform_update(dir);
         return 0;
     }
 
-    // 5. Construct relocatable paths relative to our executable's location
-    char lib_path[PATH_MAX * 2];
-    char patched_bin[PATH_MAX];
-    char *loader = "/data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1";
+    // 6. Handle interposer unpacking in non-Termux (chroot) environments
+    if (!is_termux) {
+        fixer_path = unpack_mmap_fixer();
+        if (!fixer_path) {
+            (void)fprintf(stderr,
+                          "[ERR] Failed to extract PRoot compatibility layer. Please check /tmp "
+                          "permissions.\n");
+            return 1;
+        }
+    }
 
-    // lib_path: <exec_dir>/../lib:/data/data/com.termux/files/usr/glibc/lib
-    int written = snprintf(lib_path, sizeof(lib_path),
+    // 7. Resolve dynamic loader path
+    if (access(loader, F_OK) != 0) {
+        loader = "/lib/ld-linux-aarch64.so.1";
+    }
+
+    // 8. Construct relocatable library search path
+    if (is_termux) {
+        written = snprintf(lib_path, sizeof(lib_path),
                            "%s/../lib:/data/data/com.termux/files/usr/glibc/lib", dir);
-    if (written < 0 || (size_t)written >= sizeof(lib_path)) {
+    } else {
+        written = snprintf(lib_path, sizeof(lib_path),
+                           "%s/../lib:/lib/aarch64-linux-gnu:/usr/lib/aarch64-linux-gnu:/lib64:/"
+                           "usr/lib64:/lib:/usr/lib",
+                           dir);
+    }
+    if (written < 0 || written >= (int)sizeof(lib_path)) {
         return 1;
     }
 
-    // patched_bin: <exec_dir>/agy.va39
+    // Construct path to the patched binary
     written = snprintf(patched_bin, sizeof(patched_bin), "%s/agy.va39", dir);
-    if (written < 0 || (size_t)written >= sizeof(patched_bin)) {
+    if (written < 0 || written >= (int)sizeof(patched_bin)) {
         return 1;
     }
 
-    // 6. Construct argument array
-    size_t new_argc = (size_t)argc + 4U;
-    char **new_argv = malloc(new_argc * sizeof(*new_argv));
+    // 9. Construct new argument array
+    // We allocate enough space for: loader + "--preload" + fixer_path + "--library-path" + lib_path
+    // + patched_bin + user args + NULL
+    int new_argc = argc + 8;
+    new_argv = malloc((size_t)new_argc * sizeof(*new_argv));
     if (!new_argv) {
         return 1;
     }
 
-    new_argv[0] = loader;
-    new_argv[1] = "--library-path";
-    new_argv[2] = lib_path;
-    new_argv[3] = patched_bin;
+    arg_idx = 0;
+    new_argv[arg_idx++] = (char *)loader;
+
+    // Inject the interposer dynamic library as a preload if unpacked successfully
+    if (fixer_path) {
+        new_argv[arg_idx++] = "--preload";
+        new_argv[arg_idx++] = (char *)fixer_path;
+    }
+
+    new_argv[arg_idx++] = "--library-path";
+    new_argv[arg_idx++] = lib_path;
+    new_argv[arg_idx++] = patched_bin;
 
     for (int i = 1; i < argc; i++) {
-        new_argv[(size_t)i + 3U] = argv[i];
+        new_argv[arg_idx++] = argv[i];
     }
-    new_argv[(size_t)argc + 3U] = NULL;
+    new_argv[arg_idx] = NULL;
 
-    // 7. Execute glibc loader
-    execv(loader, new_argv);
-
-    free(new_argv);
-    return 1;
+    // 10. Execute the glibc dynamic loader
+    if (execv(loader, new_argv) == -1) {
+        perror("[agy-termux] execv failed");
+        free(new_argv);
+        return 1;
+    }
 }

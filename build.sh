@@ -195,10 +195,45 @@ print(f"Patched parameters: ubfx={ubfx_count}, lsl={lsl_count}, mask={mask_count
 PY
 ok "Patched binary generated: bin/agy.va39"
 
-# 2. Compile native C bootstrapper bin/agy
-info "Compiling native C bootstrapper from lib/agy_helper.c..."
+# 2. Compile the dynamic mmap interposer first
+info "Compiling mmap VA39 compatibility layer as a shared library..."
+if [[ -n "${TERMUX_VERSION:-}" ]]; then
+  echo ""
+  echo " [!] WARNING: You are building inside native Termux. The generated"
+  echo "     libmmap_va39_fix.so will be linked against Android's Bionic libc."
+  echo "     This binary will be bundled into the bootstrapper, but it will"
+  echo "     NOT work inside a glibc PRoot environment."
+  echo "     For PRoot support, run build.sh inside a glibc PRoot distro."
+  echo ""
+fi
+mkdir -p lib
+if ! "$local_cc" -O2 -fPIC -shared -o lib/libmmap_va39_fix.so lib/mmap_va39_fix.c -ldl; then
+  die "Compilation of lib/mmap_va39_fix.c failed."
+fi
+
+# 3. Generate embedded hex array bytes header
+info "Generating embedded byte header for dynamic interposer preloading..."
+python3 -c '
+import pathlib
+so_path = pathlib.Path("lib/libmmap_va39_fix.so")
+if not so_path.exists():
+    raise FileNotFoundError("libmmap_va39_fix.so not found")
+so_data = so_path.read_bytes()
+hex_bytes = ", ".join(f"0x{b:02x}" for b in so_data)
+pathlib.Path("lib/mmap_va39_fix_bytes.h").write_text(
+    "// clang-format off\n"
+    "#include <stddef.h>\n"
+    f"static const unsigned char mmap_va39_fix_so[] = {{ {hex_bytes} }};\n"
+    f"static const size_t mmap_va39_fix_so_len = {len(so_data)};\n"
+    "// clang-format on\n"
+)
+'
+
+# 4. Compile native C bootstrapper bin/agy (which embeds mmap_va39_fix_bytes.h)
+info "Compiling native C bootstrapper with embedded interposer..."
 if ! "$local_cc" -O2 -o bin/agy lib/agy_helper.c; then
   die "Compilation of lib/agy_helper.c failed."
 fi
+
 chmod +x bin/agy
-ok "Native bootstrapper compiled: bin/agy"
+ok "Native bootstrapper compiled successfully with embedded compatibility layer."
