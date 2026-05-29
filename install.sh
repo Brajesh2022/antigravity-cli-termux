@@ -5,6 +5,13 @@ set -Eeuo pipefail
 REPO="${AGY_REPO:-wallentx/antigravity-cli-termux}"
 URL="https://github.com/$REPO/releases/latest/download/antigravity-termux-standalone.tar.gz"
 
+IS_UPDATE=0
+SUBTITLE="Standalone Installer"
+if [[ "${1:-}" == "update" ]]; then
+  IS_UPDATE=1
+  SUBTITLE="Standalone Updater"
+fi
+
 # ── Environment Detection ─────────────────────────────────────────────────────
 tp=$(awk '/^TracerPid:/ {print $2}' /proc/self/status 2>/dev/null || echo 0)
 tn=""
@@ -225,14 +232,14 @@ if { curl -fLs -H "Cache-Control: no-cache" "https://raw.githubusercontent.com/$
 
   COLS=$(tput cols </dev/tty 2>/dev/null || echo 60)
 
-  awk -v cols="$COLS" -v arch="$(uname -m)" -v bold="${BOLD}${CYAN}" -v dim="${DIM}" -v grn="${GREEN}" -v rst="${RESET}" '
+  awk -v cols="$COLS" -v subtitle="$SUBTITLE" -v arch="$(uname -m)" -v bold="${BOLD}${CYAN}" -v dim="${DIM}" -v grn="${GREEN}" -v rst="${RESET}" '
   {
     sub(/\r$/, "");
 
     if (cols >= 48) {
       printf "%s", $0;
       if (NR == 3)      printf "\033[28G %sAntigravity Termux%s", bold, rst;
-      else if (NR == 4) printf "\033[28G %sStandalone Installer%s", dim, rst;
+      else if (NR == 4) printf "\033[28G %s%s%s", dim, subtitle, rst;
       else if (NR == 5) printf "\033[28G %s────────────────────%s", dim, rst;
       else if (NR == 6) printf "\033[28G %sTarget:%s  Termux", dim, rst;
       else if (NR == 7) printf "\033[28G %sArch:%s    %s", dim, rst, arch;
@@ -246,7 +253,7 @@ if { curl -fLs -H "Cache-Control: no-cache" "https://raw.githubusercontent.com/$
     if (cols < 48) {
       printf "\n";
       printf "  %sAntigravity Termux%s\n", bold, rst;
-      printf "  %sStandalone Installer%s\n", dim, rst;
+      printf "  %s%s%s\n", dim, subtitle, rst;
       printf "  %s────────────────────%s\n", dim, rst;
       printf "  %sTarget:%s  Termux\n", dim, rst;
       printf "  %sArch:%s    %s\n", dim, rst, arch;

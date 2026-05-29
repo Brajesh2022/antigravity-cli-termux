@@ -87,32 +87,22 @@ void check_and_perform_update(const char *dir) {
             response = response_line[0];
         }
         if (response == 'y' || response == 'Y') {
-            printf("\n[agy-termux] Downloading and applying standalone update...\n");
-
-            // Runs a subshell command to download the new tar.gz, extract it, and overwrite files
-            // Uses dir/.. to target the parent directory containing bin/ and lib/
+            // Handoff the update process entirely to the bash installer
             char update_cmd[1024];
-            written = snprintf(
+            int written_cmd = snprintf(
                 update_cmd, sizeof(update_cmd),
-                "cd \"%s/..\" && "
-                "curl -fsSLO "
-                "\"https://github.com/wallentx/antigravity-cli-termux/releases/download/%s/"
-                "antigravity-termux-standalone.tar.gz\" && "
-                "tar -xzf antigravity-termux-standalone.tar.gz && "
-                "rm antigravity-termux-standalone.tar.gz",
-                dir, latest_tag);
-            if (written < 0 || written >= (int)sizeof(update_cmd)) {
+                "curl -fsSL \"https://raw.githubusercontent.com/wallentx/antigravity-cli-termux/%s/install.sh\" | bash -s update",
+                latest_tag);
+            if (written_cmd < 0 || written_cmd >= (int)sizeof(update_cmd)) {
                 printf("[agy-termux] Error: Could not construct update command.\n");
                 return;
             }
 
-            // Intentionally uses the shell so the update can run as one transactional command.
+            // Intentionally uses the shell so the installer can run with full terminal interaction.
             // NOLINTNEXTLINE(bugprone-command-processor,cert-env33-c)
             int status = system(update_cmd);
-            if (status == 0) {
-                printf("[agy-termux] Update completed successfully! Please restart the CLI.\n");
-            } else {
-                printf("[agy-termux] Error: Update failed during download or extraction.\n");
+            if (status != 0) {
+                printf("[agy-termux] Error: Update failed during installation.\n");
             }
         } else {
             printf("[agy-termux] Update cancelled.\n");
