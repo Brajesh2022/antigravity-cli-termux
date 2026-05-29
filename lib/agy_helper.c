@@ -31,7 +31,7 @@ static int agy_is_valid_release_tag(const char *tag) {
 
 // Helper to query your fork's latest release version via GitHub API and update in-place
 void check_and_perform_update(const char *dir) {
-    printf("[agy-termux] Querying latest release from wallentx/antigravity-cli-termux...\n");
+    printf("[agy-termux] Querying latest release from %s...\n", AGY_GITHUB_REPO);
 
     // Formulate a secure curl command to query the GitHub Releases API
     char cmd[512];
