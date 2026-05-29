@@ -10,9 +10,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#ifndef AGY_TERMUX_VERSION
-#define AGY_TERMUX_VERSION "1.0.2"
-#endif
 
 static int agy_is_valid_release_tag(const char *tag) {
     if (tag == NULL || tag[0] == '\0' || tag[0] == '-') {
@@ -68,10 +65,26 @@ void check_and_perform_update(const char *dir) {
         return;
     }
 
+    char current_version[32] = {0};
+    char version_cmd[1024];
+    int v_written = snprintf(version_cmd, sizeof(version_cmd), "%s/agy --version", dir);
+    if (v_written > 0 && v_written < (int)sizeof(version_cmd)) {
+        FILE *v_fp = popen(version_cmd, "r");
+        if (v_fp) {
+            if (fgets(current_version, sizeof(current_version) - 1, v_fp) != NULL) {
+                current_version[strcspn(current_version, "\r\n")] = '\0';
+            }
+            pclose(v_fp);
+        }
+    }
+    if (current_version[0] == '\0') {
+        strncpy(current_version, "unknown", sizeof(current_version));
+    }
+
     // Clean version representations (e.g. "v1.0.2" -> "1.0.2")
     const char *clean_latest = (latest_tag[0] == 'v') ? latest_tag + 1 : latest_tag;
     const char *clean_current =
-        (AGY_TERMUX_VERSION[0] == 'v') ? &AGY_TERMUX_VERSION[1] : AGY_TERMUX_VERSION;
+        (current_version[0] == 'v') ? current_version + 1 : current_version;
 
     printf("[agy-termux] Current standalone version: v%s\n", clean_current);
     printf("[agy-termux] Latest available version : v%s\n", clean_latest);
