@@ -10,6 +10,10 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#ifndef AGY_GITHUB_REPO
+#define AGY_GITHUB_REPO "wallentx/antigravity-cli-termux"
+#endif
+
 
 static int agy_is_valid_release_tag(const char *tag) {
     if (tag == NULL || tag[0] == '\0' || tag[0] == '-') {
@@ -34,8 +38,9 @@ void check_and_perform_update(const char *dir) {
     int written = snprintf(
         cmd, sizeof(cmd),
         "curl -fsSL -H \"User-Agent: Termux-Agy\" "
-        "https://api.github.com/repos/wallentx/antigravity-cli-termux/releases/latest | grep "
-        "'\"tag_name\":' | head -n 1 | cut -d'\"' -f4");
+        "https://api.github.com/repos/%s/releases/latest | grep "
+        "'\"tag_name\":' | head -n 1 | cut -d'\"' -f4",
+        AGY_GITHUB_REPO);
     if (written < 0 || written >= (int)sizeof(cmd)) {
         printf("[agy-termux] Error: Could not construct update check command.\n");
         return;
@@ -104,8 +109,8 @@ void check_and_perform_update(const char *dir) {
             char update_cmd[1024];
             int written_cmd = snprintf(
                 update_cmd, sizeof(update_cmd),
-                "curl -fsSL \"https://raw.githubusercontent.com/wallentx/antigravity-cli-termux/%s/install.sh\" | bash -s update",
-                latest_tag);
+                "curl -fsSL \"https://raw.githubusercontent.com/%s/%s/install.sh\" | bash -s update",
+                AGY_GITHUB_REPO, latest_tag);
             if (written_cmd < 0 || written_cmd >= (int)sizeof(update_cmd)) {
                 printf("[agy-termux] Error: Could not construct update command.\n");
                 return;
