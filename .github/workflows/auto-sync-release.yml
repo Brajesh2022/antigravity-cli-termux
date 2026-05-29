@@ -59,6 +59,8 @@ jobs:
 
       - name: Build Standalone Binaries
         if: steps.check_version.outputs.build_needed == 'true'
+        env:
+          AGY_REPO: ${{ github.repository }}
         run: |
           ./build.sh
 
