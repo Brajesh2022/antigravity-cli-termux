@@ -34,8 +34,8 @@ void check_and_perform_update(const char *dir) {
     int written = snprintf(
         cmd, sizeof(cmd),
         "curl -fsSL -H \"User-Agent: Termux-Agy\" "
-        "https://api.github.com/repos/wallentx/antigravity-cli-termux/releases/latest | rg -o "
-        "'\"tag_name\"\\s*:\\s*\"[^\"]*' | cut -d'\"' -f4");
+        "https://api.github.com/repos/wallentx/antigravity-cli-termux/releases/latest | grep "
+        "'\"tag_name\":' | head -n 1 | cut -d'\"' -f4");
     if (written < 0 || written >= (int)sizeof(cmd)) {
         printf("[agy-termux] Error: Could not construct update check command.\n");
         return;
