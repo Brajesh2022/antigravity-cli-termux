@@ -10,9 +10,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#ifndef AGY_GITHUB_REPO
-#define AGY_GITHUB_REPO "wallentx/antigravity-cli-termux"
-#endif
 
 
 static int agy_is_valid_release_tag(const char *tag) {
@@ -31,7 +28,10 @@ static int agy_is_valid_release_tag(const char *tag) {
 
 // Helper to query your fork's latest release version via GitHub API and update in-place
 void check_and_perform_update(const char *dir) {
-    printf("[agy-termux] Querying latest release from %s...\n", AGY_GITHUB_REPO);
+    const char *repo_env = getenv("AGY_REPO");
+    const char *target_repo = (repo_env != NULL && repo_env[0] != '\0') ? repo_env : "wallentx/antigravity-cli-termux";
+
+    printf("[agy-termux] Querying latest release from %s...\n", target_repo);
 
     // Formulate a secure curl command to query the GitHub Releases API
     char cmd[512];
@@ -40,7 +40,7 @@ void check_and_perform_update(const char *dir) {
         "curl -fsSL -H \"User-Agent: Termux-Agy\" "
         "https://api.github.com/repos/%s/releases/latest | grep "
         "'\"tag_name\":' | head -n 1 | cut -d'\"' -f4",
-        AGY_GITHUB_REPO);
+        target_repo);
     if (written < 0 || written >= (int)sizeof(cmd)) {
         printf("[agy-termux] Error: Could not construct update check command.\n");
         return;
@@ -110,7 +110,7 @@ void check_and_perform_update(const char *dir) {
             int written_cmd = snprintf(
                 update_cmd, sizeof(update_cmd),
                 "curl -fsSL \"https://raw.githubusercontent.com/%s/%s/install.sh\" | bash -s update",
-                AGY_GITHUB_REPO, latest_tag);
+                target_repo, latest_tag);
             if (written_cmd < 0 || written_cmd >= (int)sizeof(update_cmd)) {
                 printf("[agy-termux] Error: Could not construct update command.\n");
                 return;

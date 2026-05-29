@@ -230,13 +230,8 @@ pathlib.Path("lib/mmap_va39_fix_bytes.h").write_text(
 '
 
 # 4. Compile native C bootstrapper bin/agy (which embeds mmap_va39_fix_bytes.h)
-AGY_REPO_FLAG=""
-if [[ -n "${AGY_REPO:-}" ]]; then
-  AGY_REPO_FLAG="-DAGY_GITHUB_REPO=\"${AGY_REPO}\""
-fi
-
 info "Compiling native C bootstrapper with embedded interposer..."
-if ! "$local_cc" -O2 ${AGY_REPO_FLAG} -o bin/agy lib/agy_helper.c; then
+if ! "$local_cc" -O2 -o bin/agy lib/agy_helper.c; then
   die "Compilation of lib/agy_helper.c failed."
 fi
 
